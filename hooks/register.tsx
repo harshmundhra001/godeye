@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { ElementConstructor, InputProps, Register } from 'claude-code'
 
 import type { Bank, Core, Flow, Note, Plan, Tab, ToolCall } from '../types'
 import { filled, sweep, todoProgress } from './progress'
@@ -33,7 +33,6 @@ const others = atom({ plugin: 'godeye', key: 'others' } as const, [])
 const cost = atom({ plugin: 'godeye', key: 'cost' } as const, 0)
 const carry = atom({ plugin: 'godeye', key: 'carry' } as const, 0)
 const rawCost = atom({ plugin: 'godeye', key: 'rawCost' } as const, 0)
-const hidden = atom({ plugin: 'godeye', key: 'hidden' } as const, [])
 const editTitle = atom({ plugin: 'godeye', key: 'editTitle' } as const, false)
 const todos = atom({ plugin: 'godeye', key: 'todos' } as const, [])
 const dayLimit = atom({ plugin: 'godeye', key: 'dayLimit' } as const, DEFAULT_DAY_LIMIT)
@@ -52,7 +51,7 @@ const SEED: Plan = {
   ],
   aiAddition: [],
   examples: ['Names considered: god-eye (chosen), panopticon, argus, overwatch, sentinel, oculus'],
-  fyi: ['Animation is picked in the lab tab', 'Look is Claude orange on dark'],
+  fyi: ['Look is Claude orange on dark'],
 }
 
 // The four sections of a plan, each a heading over any number of points.
@@ -70,7 +69,6 @@ const points = (v: unknown): string[] =>
 // Mirrors of the atoms the timer needs: it only redraws while something moves.
 let working = false
 let agentsRunning = false
-let labOpen = false
 
 let knowEnabled = false
 let lastPrompt = ''
@@ -81,6 +79,7 @@ let lastSent = ''
 let lastCost = -1
 let lastOthers = ''
 let lastBank = 0
+let lastTotals = 0
 let lastTick = 0
 let lastResponse = 0
 let cacheTtlLong = false
@@ -201,6 +200,9 @@ const watchSession = async ($: any, usage: { startedAt: number; context: { token
 // where the other sessions read it, and reads theirs.
 const poll = async ($: any) => {
   const now = Date.now()
+  // /clear starts the session's state over, the day totals with it: read them
+  // again as soon as they are found empty, and now and then for other sessions.
+  if (now - lastTotals > 10_000 || Object.keys(await read($, spend)).length === 0) await totals($)
   myId = await $.session.id()
   const live: LiveAgent[] = await $.agent.list()
   const before: AgentRow[] = await read($, agents)
@@ -294,6 +296,7 @@ const spendCache = new Map<string, { mtime: number; rec: SpendRec | undefined }>
 // Sums every session's own spend record into day totals: the shared files of all
 // sessions, over any records this plugin's own store still holds from before.
 const totals = async ($: any) => {
+  lastTotals = Date.now()
   const byId = new Map<string, SpendRec>()
   for (const key of (await $.store.keys()) as string[]) {
     if (!key.startsWith('spend:')) continue
@@ -312,7 +315,7 @@ const totals = async ($: any) => {
   for (const rec of byId.values()) {
     for (const [d, usd] of Object.entries(rec.days ?? {})) sum[d] = (sum[d] ?? 0) + usd
   }
-  await update($, spend, () => sum)
+  if (!sameJson(sum, await read($, spend))) await update($, spend, () => sum)
 }
 
 // Adds what this session has cost since the last look to today's day total.
@@ -456,7 +459,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'godeye',
-      description: 'Open the GOD-EYE pane: live tool calls, plans and animation lab',
+      description: 'Open the GOD-EYE pane: live tool calls, plans and animations',
     })
     const saved = await $.store.get('plans')
     const list: Plan[] = Array.isArray(saved)
@@ -474,8 +477,6 @@ export const register: Register = on => {
     await $.store.delete('spend')
     knowEnabled = (await $.store.get('knowOn')) === true
     await update($, knowOn, () => knowEnabled)
-    const gone = await $.store.get('hiddenAnims')
-    if (Array.isArray(gone)) await update($, hidden, () => gone as string[])
     const savedLimit = await $.store.get('dayLimit')
     if (typeof savedLimit === 'number' && savedLimit > 0) await update($, dayLimit, () => savedLimit)
     cacheTtlLong = (await $.store.get('cacheLong')) === true
@@ -491,7 +492,7 @@ export const register: Register = on => {
     // Redraw while something moves, and once a second while the cache counts down.
     $.clock.every(250, async () => {
       const now = Date.now()
-      const tick = working || agentsRunning || labOpen
+      const tick = working || agentsRunning
       const counting = lastResponse > 0 && now - lastResponse < (cacheTtlLong ? ONE_HOUR : FIVE_MIN) + 1000
       if (!tick && !(counting && now - lastTick >= 1000)) return
       lastTick = now
@@ -563,7 +564,9 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Input } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text, Button } = ui
+    const Input = (ui as unknown as { Input: ElementConstructor<InputProps> }).Input
     const current: Tab = await read($, tab)
     const list = await read($, calls)
     const saved = await read($, plans)
@@ -586,7 +589,6 @@ export const register: Register = on => {
     const wide = (e.viewport?.columns ?? 120) >= 96
     const room = Math.max(1, (e.viewport?.rows ?? 24) - 6 - 9)
     const show = (next: Tab) => () => {
-      labOpen = next === 'lab'
       void update($, tab, () => next)
     }
     const draw = (rows: Seg[][], busyNow: boolean) =>
@@ -602,10 +604,6 @@ export const register: Register = on => {
     const save = async (next: Plan[]) => {
       await update($, plans, () => next)
       await $.store.set('plans', next)
-    }
-    const pick = async (id: string) => {
-      await update($, anim, () => id)
-      await $.store.set('anim', id)
     }
     const tabText = (name: Tab, label: string) => (
       <Text
@@ -666,13 +664,7 @@ export const register: Register = on => {
               : filled(0, 30, '#9a9a96')
     const plan = saved.find(p => p.id === openId)
     const renaming: boolean = await read($, editTitle)
-    const gone: string[] = await read($, hidden)
-    const visible = ANIMATIONS.filter(a => !gone.includes(a.id))
-    const active: Animation = visible.find(a => a.id === chosen) ?? visible[0] ?? ANIMATIONS[0]
-    const setGone = async (next: string[]) => {
-      await update($, hidden, () => next)
-      await $.store.set('hiddenAnims', next)
-    }
+    const active: Animation = ANIMATIONS.find(a => a.id === chosen) ?? ANIMATIONS[0]!
 
     return (
       <Box flexDirection="column">
@@ -683,10 +675,6 @@ export const register: Register = on => {
           <Text>   </Text>
           <Button key="tab-plans" onPress={show('plans')}>
             {tabText('plans', `plans ${saved.length}`)}
-          </Button>
-          <Text>   </Text>
-          <Button key="tab-lab" onPress={show('lab')}>
-            {tabText('lab', 'lab')}
           </Button>
           <Text>   </Text>
           <Button key="tab-settings" onPress={show('settings')}>
@@ -1081,7 +1069,7 @@ export const register: Register = on => {
                 value={plan.title}
                 placeholder="heading"
                 submitLabel="save"
-                onSubmit={text => {
+                onSubmit={(text: string) => {
                   const v = text.trim()
                   if (v) void save(saved.map(p => (p.id === plan.id ? { ...p, title: v } : p)))
                   void update($, editTitle, () => false)
@@ -1118,7 +1106,7 @@ export const register: Register = on => {
                   label="  +"
                   placeholder="add a point, Enter to save"
                   submitLabel="add"
-                  onSubmit={text => {
+                  onSubmit={(text: string) => {
                     const v = text.trim()
                     if (v)
                       void save(
@@ -1152,7 +1140,7 @@ export const register: Register = on => {
                 value={String(limit)}
                 placeholder="e.g. 20"
                 submitLabel="save"
-                onSubmit={async text => {
+                onSubmit={async (text: string) => {
                   const v = Number(text.replace(/[$,\s]/g, ''))
                   if (!Number.isFinite(v) || v <= 0) return
                   await update($, dayLimit, () => v)
@@ -1177,41 +1165,6 @@ export const register: Register = on => {
               </Box>
               <Text dimColor>How long the cache guard counts. Press to switch if your setup caches for an hour.</Text>
             </Box>
-          </Box>
-        )}
-        {current === 'lab' && (
-          <Box flexDirection="column">
-            <Text dimColor>Press Select under the one you like. It plays in the godeye tab (the eye+clock shows working, then idle).</Text>
-            <Box flexDirection="row" flexWrap="wrap">
-              {visible.map(a => (
-                <Box
-                  key={`anim-${a.id}`}
-                  flexDirection="column"
-                  borderStyle="round"
-                  width={34}
-                >
-                  <Text bold color={a.id === active.id ? 'claude' : undefined}>
-                    {a.name}
-                    {a.id === active.id ? '  ✔ selected' : ''}
-                  </Text>
-                  {draw(a.lines(n, true), true)}
-                  {a.id === 'eyeclock' && draw(a.lines(n, false), false)}
-                  <Box>
-                    <Button key={`pick-${a.id}`} onPress={() => void pick(a.id)}>
-                      <Text bold>[ Select ]</Text>
-                    </Button>
-                    <Button key={`del-${a.id}`} onPress={() => void setGone([...gone, a.id])}>
-                      <Text color="#ff5c5c">  [x]</Text>
-                    </Button>
-                  </Box>
-                </Box>
-              ))}
-            </Box>
-            {gone.length > 0 && (
-              <Button key="restore-anims" onPress={() => void setGone([])}>
-                <Text dimColor>[restore {gone.length} deleted]</Text>
-              </Button>
-            )}
           </Box>
         )}
       </Box>

@@ -64,7 +64,7 @@ export const bucket = (ratio: number, inner = 9, rows = 6): Seg[][] => {
   for (let r = 0; r < rows; r++) {
     const fromBottom = rows - 1 - r
     const liquid =
-      fromBottom < full ? '█' : fromBottom === full && part !== ' ' ? part : ' '
+      fromBottom < full ? '█' : fromBottom === full && part && part !== ' ' ? part : ' '
     out.push([
       { text: '│', dim: true },
       { text: liquid.repeat(inner), color },

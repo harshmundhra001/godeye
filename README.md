@@ -75,8 +75,7 @@ Once installed, GodEye runs automatically in the background, monitoring your Cla
 
 1. **GodEye** - Main monitoring dashboard with vitals and cost
 2. **Plans** - Manage implementation plans and todos
-3. **Lab** - Experiment with animations and visual settings
-4. **Settings** - Configure limits and preferences
+3. **Settings** - Configure limits and preferences
 
 ### Key Metrics Explained
 

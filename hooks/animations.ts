@@ -119,7 +119,7 @@ const eyeclock: Animation['lines'] = (n, busy) => {
   const head = busy ? (n * Math.PI) / 10 : 0
   const hue = (n * 9) % 360
   const pupil = '◉'
-  const shift = busy ? [0, 1, 1, 0, -1, -1][Math.floor(n / 3) % 6] : 0
+  const shift = busy ? [0, 1, 1, 0, -1, -1][Math.floor(n / 3) % 6]! : 0
   const eye = busy ? eyeOpen(shift, pupil) : EYE_SHUT
   const out: Seg[][] = []
   for (let r = 0; r < rows; r++) {
@@ -132,7 +132,7 @@ const eyeclock: Animation['lines'] = (n, busy) => {
       const ec = c - (cx - 6)
       let seg: Seg = { text: ' ' }
       if (er >= 0 && er < 3 && ec >= 0 && ec < 13) {
-        const ch = eye[er][ec]
+        const ch = eye[er]![ec] ?? ' '
         seg = { text: ch, color: EYE_BLUE }
       } else if (Math.abs(dist - R) < 0.55) {
         if (!busy) seg = { text: '·', dim: true }

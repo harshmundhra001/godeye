@@ -66,7 +66,7 @@ export type Flow = {
   lastModel: string
   hist: number[]
 }
-export type Tab ='godeye' | 'plans' | 'lab' | 'settings'
+export type Tab ='godeye' | 'plans' | 'settings'
 
 declare module 'claude-code' {
   interface PluginState {
@@ -74,7 +74,6 @@ declare module 'claude-code' {
       calls: ToolCall[]
       tab: Tab
       plans: Plan[]
-      hidden: string[]
       editTitle: boolean
       dayLimit: number
       todos: { content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm: string }[]
